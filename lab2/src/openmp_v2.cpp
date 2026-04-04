@@ -17,22 +17,18 @@ int main() {
     double b_norm = 0;
     int iter = 0;
     bool converged = false;
-    // ИСПРАВЛЕНИЕ: Объявляем переменную здесь, чтобы она была shared для всех потоков
     double current_res_norm_sq = 0;
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Добавляем current_res_norm_sq в shared
     #pragma omp parallel default(none) shared(A, b, x, x_next, b_norm, converged, iter, current_res_norm_sq)
     {
-        // Инициализация
         #pragma omp for schedule(runtime)
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) A[i * N + j] = (i == j) ? 2.0 : 1.0;
             b[i] = (double)N + 1.0;
         }
 
-        // Расчет нормы b через локальную переменную и atomic
         double local_b_sum = 0;
         #pragma omp for schedule(runtime)
         for (int i = 0; i < N; i++) local_b_sum += b[i] * b[i];
@@ -46,11 +42,9 @@ int main() {
         b_norm = std::sqrt(b_norm);
 
         while (!converged) {
-            // ИСПРАВЛЕНИЕ: Обнуляем общую переменную перед редукцией (делает один поток)
             #pragma omp single
             current_res_norm_sq = 0;
 
-            // Теперь reduction работает корректно, так как переменная shared
             #pragma omp for schedule(runtime) reduction(+:current_res_norm_sq)
             for (int i = 0; i < N; ++i) {
                 double Ax_i = 0;
@@ -67,13 +61,25 @@ int main() {
                 iter++;
                 if (iter > 50000) converged = true;
             }
-            // Неявный барьер в конце single гарантирует синхронизацию перед новой итерацией while
         }
     }
 
     auto end = std::chrono::high_resolution_clock::now();
+
+    // --- БЛОК ПРОВЕРКИ РЕШЕНИЯ (Verification) ---
+    double final_res_norm_l1 = 0;
+    // Считаем L1-норму невязки: сумма абсолютных значений |Ax - b|
+    for (int i = 0; i < N; ++i) {
+        double Ax_i = 0;
+        for (int j = 0; j < N; ++j) {
+            Ax_i += A[i * N + j] * x[j];
+        }
+        final_res_norm_l1 += std::abs(Ax_i - b[i]);
+    }
+
     std::cout << "Time: " << std::chrono::duration<double>(end-start).count() << " sec" << std::endl;
     std::cout << "Iterations: " << iter << std::endl;
+    std::cout << "Verification (Residual Sum |Ax-b|): " << final_res_norm_l1 << std::endl;
 
     return 0;
 }
